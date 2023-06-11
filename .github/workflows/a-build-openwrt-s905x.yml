@@ -14,13 +14,13 @@ on:
     #- cron: '0 17 * * 0'
 
 env:
-  REPO_URL: https://github.com/openwrt/openwrt.git
+  REPO_URL: https://github.com/openwrt/openwrt
   REPO_BRANCH: master
-  ROOT_DIR: router-config/openwrt-s905d
-  FEEDS_CONF: router-config/openwrt-s905d/feeds.conf.default
-  CONFIG_FILE: router-config/openwrt-s905d/.config
-  DIY_P1_SH: router-config/openwrt-s905d/diy-part1.sh
-  DIY_P2_SH: router-config/openwrt-s905d/diy-part2.sh
+  ROOT_DIR: router-config/openwrt-n1
+  FEEDS_CONF: router-config/openwrt-n1/feeds.conf.default
+  CONFIG_FILE: router-config/openwrt-n1/.config
+  DIY_P1_SH: router-config/openwrt-n1/diy-part1.sh
+  DIY_P2_SH: router-config/openwrt-n1/diy-part2.sh
   UPLOAD_BIN_DIR: true
   UPLOAD_ARMVIRT: true
   UPLOAD_FIRMWARE: true
@@ -132,21 +132,21 @@ jobs:
       uses: kittaakos/upload-artifact-as-is@master
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       with:
-        path: ${ GITHUB_WORKSPACE }/openwrt/bin/*
+        path: ${ GITHUB_WORKSPACE }/openwrt/bin/targets/*
         #path: ${{ env.BIN_FILE_PATH }}/
 
     - name: Upload OpenWrt Firmware to cowtransfer
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_COWTRANSFER == 'true' && !cancelled()
       run: |
         curl -fsSL git.io/file-transfer | sh
-        ./transfer cow --block 2621440 -s -p 64 --no-progress ${ GITHUB_WORKSPACE }/openwrt/bin/* 2>&1 | tee cowtransfer.log
+        ./transfer cow --block 2621440 -s -p 64 --no-progress ${{ env.BIN_FILE_PATH }}/{openwrt_s9xxx_*,openwrt_n1_*} 2>&1 | tee cowtransfer.log
         echo "COW_URL=$(cat cowtransfer.log | grep https | cut -f3 -d" ")" >> $GITHUB_ENV
 
     - name: Upload OpenWrt Firmware to WeTransfer
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
       run: |
         curl -fsSL git.io/file-transfer | sh
-        ./transfer wet -s -p 16 --no-progress ${{ env.BIN_FILE_PATH }}/{openwrt_s9xxx_*,openwrt_*} 2>&1 | tee wetransfer.log
+        ./transfer wet -s -p 16 --no-progress ${{ env.BIN_FILE_PATH }}/{openwrt_s9xxx_*,openwrt_n1_*} 2>&1 | tee wetransfer.log
         echo "WET_URL=$(cat wetransfer.log | grep https | cut -f3 -d" ")" >> $GITHUB_ENV
 
     - name: Generate release tag
@@ -218,7 +218,7 @@ jobs:
         [ -d openwrt-armvirt ] || mkdir -p openwrt-armvirt
         cp -f openwrt/bin/targets/*/*/*.tar.gz openwrt-armvirt/ && sync
         sudo chmod +x make
-        sudo ./make -b s905x-t95 -s 2048
+        sudo ./make -b s905x-t95
         #sudo ./make -d -b s905x3_s905x2_s905x_s905w_s905d_s922x_s912 -k 5.10.70_5.4.150
         [ -d ipk ] || mkdir -p ipk
         cp -rf $(find openwrt/bin/packages/ -type f -name "*.ipk") ipk/ && sync
@@ -238,7 +238,7 @@ jobs:
         ##echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/${DOWNLOAD_ARMVIRT}"
         ##https://github.com/vpei/amlogic-s9xxx-openwrt/releases/download/OpenWrt_s9xxx_lede_2021.10.24.0333/openwrt-armvirt-64-default-rootfs.tar.gz
         ##sudo ./make -d -b s905x3_s905x2_s905x_s905w_s905d_s922x_s912 -k 5.10.70_5.4.150
-        #sudo ./make -d -b s905d -k 5.4.157
+        #sudo ./make -d -b n1 -k 5.4.158
         #curl -s "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases" | grep -o "openwrt_s9xxx_lede.*/ipk.tar.gz" | head -n 1 > DOWNLOAD_IPK
         #[ -s DOWNLOAD_IPK ] && wget -q -P out https://github.com/${GITHUB_REPOSITORY}/releases/download/$(cat DOWNLOAD_IPK)
         #echo "PACKAGED_OUTPUTPATH=${PWD}/out" >> $GITHUB_ENV
@@ -335,6 +335,25 @@ jobs:
           Default WIFI password: none
           Install to EMMC: Login to OpenWrt → System → Amlogic Service → Install OpenWrt
           ${{ env.useVersionInfo }}
+
+    - name: Delete workflow runs
+      uses: GitRML/delete-workflow-runs@main
+      if: env.DELETE_ARTIFACTS == 'true' && !cancelled()
+      with:
+        retain_days: 30
+        keep_minimum_runs: $RECENT_LASTEST
+
+    - name: Remove old Releases
+      uses: dev-drprasad/delete-older-releases@v0.2.0
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        #repo:
+        keep_latest: 30
+        #delete_tag_pattern:
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Send telegram message on push
       uses: appleboy/telegram-action@master
       if: env.UPLOAD_RELEASE == 'true' && env.DELETE_RELEASE == 'true' && !cancelled()
@@ -348,6 +367,14 @@ jobs:
           Repository: ${{ github.repository }}
           
           See changes: https://github.com/${{ github.repository }}/commit/${{github.sha}}
+
+    - name: Upload Bin Folder
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      with:
+        #name: bin-archive
+        name: bin
+        path: openwrt/bin
 
   Upload:
     needs: [Build]
@@ -367,74 +394,89 @@ jobs:
           echo "FIRMWARE=$(echo '${{needs.Build.outputs.FIRMWARE}}')" >> $GITHUB_ENV
           echo "GENERATE_STATUS=$(echo '${{needs.Build.outputs.GENERATE_STATUS}}')" >> $GITHUB_ENV
 
-      #- name: Download Bin Folder
-        #uses: actions/download-artifact@v2
-        ##if: env.GENERATE_STATUS == 'success'
-        #with:
-          #name: bin
-          ##name: bin-archive
-          #path: openwrt/bin
+      - name: Download Bin Folder
+        uses: actions/download-artifact@v2
+        #if: env.GENERATE_STATUS == 'success'
+        with:
+          name: bin
+          #name: bin-archive
+          path: openwrt/bin
 
-      #- name: Deploy Packages-Server
-        ##if: env.GENERATE_STATUS == 'success'
-        #run: |
-          #mkdir -p server/web/snapshots/targets/$TARGET/$SUBTARGET
-          #cp -r $OPENWRTROOT/bin/packages server/web/snapshots
-          #cp -r $OPENWRTROOT/bin/targets/$TARGET/$SUBTARGET/packages server/web/snapshots/targets/$TARGET/$SUBTARGET
-          #mv server packages-server
-          #zip -qrm packages-server.zip packages-server
-          #mv packages-server.zip $OPENWRTROOT/bin/targets/$TARGET/$SUBTARGET
+      - name: Deploy Packages-Server
+        #if: env.GENERATE_STATUS == 'success'
+        run: |
+          mkdir -p server/web/snapshots/targets/$TARGET/$SUBTARGET
+          cp -r $OPENWRTROOT/bin/packages server/web/snapshots
+          cp -r $OPENWRTROOT/bin/targets/$TARGET/$SUBTARGET/packages server/web/snapshots/targets/$TARGET/$SUBTARGET
+          mv server packages-server
+          zip -qrm packages-server.zip packages-server
+          mv packages-server.zip $OPENWRTROOT/bin/targets/$TARGET/$SUBTARGET
 
-      #- name: Organize Files
-        #id: organize
-        ##if: env.GENERATE_STATUS == 'success'
-        #run: |
-          #cd ${FIRMWARE}
-          #rm -rf packages
-          #cd $OPENWRTROOT/bin/targets/$TARGET/
-          #curl -fsSL git.io/file-transfer | sh
-          #df -hT $PWD
-          #echo "::set-output name=ORGANIZE_STATUS::success"
+      - name: Organize Files
+        id: organize
+        #if: env.GENERATE_STATUS == 'success'
+        run: |
+          cd ${FIRMWARE}
+          rm -rf packages
+          cd $OPENWRTROOT/bin/targets/$TARGET/
+          curl -fsSL git.io/file-transfer | sh
+          df -hT $PWD
+          echo "::set-output name=ORGANIZE_STATUS::success"
 
-      #- name: Upload Firmware To WeTransfer
-        #id: wetransfer
-        #if: steps.organize.outputs.ORGANIZE_STATUS == 'success' && env.UPLOAD_WETRANSFER == 'true'
-        #run: |
-          #cd $OPENWRTROOT/bin/targets/$TARGET/
-          #./transfer wet -s -p 16 --no-progress ${FIRMWARE} 2>&1 | tee wetransfer.log
-          #echo "::warning file=Firmware-Wetransfer.com::$(cat wetransfer.log | grep https)"
-          #echo "::set-output name=url::$(cat wetransfer.log | grep https | cut -f3 -d" ")"
+      - name: Upload Firmware To WeTransfer
+        id: wetransfer
+        if: steps.organize.outputs.ORGANIZE_STATUS == 'success' && env.UPLOAD_WETRANSFER == 'true'
+        run: |
+          cd $OPENWRTROOT/bin/targets/$TARGET/
+          ./transfer wet -s -p 16 --no-progress ${FIRMWARE} 2>&1 | tee wetransfer.log
+          echo "::warning file=Firmware-Wetransfer.com::$(cat wetransfer.log | grep https)"
+          echo "::set-output name=url::$(cat wetransfer.log | grep https | cut -f3 -d" ")"
 
-      #- name: Upload Firmware To CowTransfer
-        #id: cowtransfer
-        #if: steps.organize.outputs.ORGANIZE_STATUS == 'success' && env.UPLOAD_COWTRANSFER == 'true'
-        #run: |
-          #cd $OPENWRTROOT/bin/targets/$TARGET/
-          #./transfer cow --block 2621440 -s -p 64 --no-progress ${FIRMWARE} 2>&1 | tee cowtransfer.log
-          #echo "::warning file=Firmware-Cowtransfer.com::$(cat cowtransfer.log | grep https)"
-          #echo "::set-output name=url::$(cat cowtransfer.log | grep https | cut -f3 -d" ")"
+      - name: Upload Firmware To CowTransfer
+        id: cowtransfer
+        if: steps.organize.outputs.ORGANIZE_STATUS == 'success' && env.UPLOAD_COWTRANSFER == 'true'
+        run: |
+          cd $OPENWRTROOT/bin/targets/$TARGET/
+          ./transfer cow --block 2621440 -s -p 64 --no-progress ${FIRMWARE} 2>&1 | tee cowtransfer.log
+          echo "::warning file=Firmware-Cowtransfer.com::$(cat cowtransfer.log | grep https)"
+          echo "::set-output name=url::$(cat cowtransfer.log | grep https | cut -f3 -d" ")"
 
-      #- name: Generate release Tag
-        #id: tag-release
-        #if: steps.organize.outputs.ORGANIZE_STATUS == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
-        #run: |
-          #echo "::set-output name=release_tag::$(date +"%Y.%m.%d")-Lean1"
-          #echo "::set-output name=release_date::$(date +"%Y.%m.%d")"
-          #touch release.txt
-          #[ $UPLOAD_COWTRANSFER = true ] && echo "🔗 [Cowtransfer-3](${{ steps.cowtransfer.outputs.url }})" >> release.txt
-          #[ $UPLOAD_WETRANSFER = true ] && echo "🔗 [WeTransfer-3](${{ steps.wetransfer.outputs.url }})" >> release.txt
-          #echo "::set-output name=status::success"
+      - name: Generate release Tag
+        id: tag-release
+        if: steps.organize.outputs.ORGANIZE_STATUS == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+        run: |
+          echo "::set-output name=release_tag::$(date +"%Y.%m.%d")-Lean1"
+          echo "::set-output name=release_date::$(date +"%Y.%m.%d")"
+          touch release.txt
+          [ $UPLOAD_COWTRANSFER = true ] && echo "🔗 [Cowtransfer-3](${{ steps.cowtransfer.outputs.url }})" >> release.txt
+          [ $UPLOAD_WETRANSFER = true ] && echo "🔗 [WeTransfer-3](${{ steps.wetransfer.outputs.url }})" >> release.txt
+          echo "::set-output name=status::success"
 
-      #- name: Upload firmware to release
-        #uses: softprops/action-gh-release@v1
-        #if: steps.tag-release.outputs.status == 'success' && !cancelled()
-        #env:
-          #GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        #with:
-          #name: ${{ steps.tag-release.outputs.release_date }} NanoPi-R4S formal edition_Docker版_全插件
-          #tag_name: ${{ steps.tag-release.outputs.release_tag }}
-          #body_path: release.txt
-          #files: ${{ env.FIRMWARE }}/*
+      - name: Upload firmware to release
+        uses: softprops/action-gh-release@v1
+        if: steps.tag-release.outputs.status == 'success' && !cancelled()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          name: ${{ steps.tag-release.outputs.release_date }} NanoPi-R4S formal edition_Docker版_全插件
+          tag_name: ${{ steps.tag-release.outputs.release_tag }}
+          body_path: release.txt
+          files: ${{ env.FIRMWARE }}/*
+
+      - name: Delete workflow runs
+        uses: GitRML/delete-workflow-runs@main
+        with:
+          retain_days: 8
+          keep_minimum_runs: 5
+
+      - name: Remove old Releases
+        uses: dev-drprasad/delete-older-releases@v0.1.0
+        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+        with:
+          keep_latest: 20
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASES_TOKEN }}
 
       - name: Delete older workflow runs and artifacts
         uses: Mattraks/delete-workflow-runs@main
@@ -445,22 +487,11 @@ jobs:
           retain_days: ${{ env.KEEP_DAY }}
           keep_minimum_runs: ${{ env.KEEP_MININUM_RUNS }}
 
-      - name: Remove old Releases
-        uses: dev-drprasad/delete-older-releases@v0.2.0
-        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-        env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-            #repo:
-            keep_latest: 30
-            #delete_tag_pattern:
-            delete_tags: true
-
       - name: Delete Artifacts
         uses: geekyeggo/delete-artifact@v1
         with:
           name: |
-            openwrt_bin_*
+            bin
             #bin-archive
 
       - name: Send telegram message on push
